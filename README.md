@@ -9,7 +9,7 @@
 ## 📂 โครงสร้างโปรเจกต์ (Project Structure)
 
 ```text
-assignment-1/
+blockchain-assignment-1/
 │
 ├── models.py        # Data Structures (Transaction, Block, Node)
 ├── blockchain.py    # Core Logic (Consensus, Mining, Hashing)
@@ -28,7 +28,7 @@ assignment-1/
 เปิด Terminal หรือ Command Prompt แล้วพิมพ์คำสั่ง:
 
 ```bash
-cd blockchain
+cd blockchain-assignment-1
 ```
 
 ---
