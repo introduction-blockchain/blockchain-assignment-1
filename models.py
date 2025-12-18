@@ -1,7 +1,7 @@
 import hashlib
 import json
 import time
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 
 # --- Pydantic Models (สำหรับ API & Validation) ---
@@ -9,22 +9,41 @@ from pydantic import BaseModel
 class XRayResult(BaseModel):
     """ข้อมูลผลลัพธ์จาก AI"""
     diagnosis: str
-    confidence_score: float
     ipfs_image_hash: str
+
+class SensitiveData(BaseModel):
+    """ข้อมูลส่วนตัวคนไข้ (จะถูกเข้ารหัสก่อนลง Block)"""
+    patient_name: str
+    patient_age: int
+    symptoms: str
+    doctor_notes: str
 
 class Data(BaseModel):
     """ข้อมูลธุรกรรมที่จะบันทึกลง Block"""
-    id: str             # Unique ID ของรายการนี้
-    doctor_public_key: str
-    patient_hash_id: str
+    id: str             
+    doctor_public_key: str      # Public Key เพื่อระบุตัวตนหมอ (และใช้ Verify)
+    patient_hash_id: str        # Hash ไอดีคนไข้ (ไว้ค้นหาแบบไม่ระบุตัวตน)
+    encrypted_data: str         # <--- ข้อมูล SensitiveData ที่ถูกเข้ารหัสแล้ว (Base64)
     ai_result: XRayResult
     timestamp: float
 
 class AIRequest(BaseModel):
-    """รูปแบบข้อมูล Request ที่ส่งเข้ามาทาง API"""
+    """Request สร้าง Block: ต้องส่ง Public Key มาด้วยเพื่อใช้เข้ารหัส"""
     image_base64: str
-    doctor_id: str
     patient_id: str
+    
+    # ข้อมูลส่วนตัวคนไข้
+    patient_name: str
+    patient_age: int
+    symptoms: str
+    
+    # Key ของหมอ (User สร้างเองแล้วส่งมา)
+    doctor_public_key: str 
+
+class DecryptRequest(BaseModel):
+    """Request สำหรับขอดูข้อมูลแบบถอดรหัส"""
+    doctor_public_key: str
+    doctor_private_key: str  # ต้องใช้ Private Key เพื่อปลดล็อคข้อมูล
 
 # --- Python Classes (สำหรับโครงสร้างภายใน Blockchain) ---
 
@@ -48,7 +67,6 @@ class Block:
 
     def calculate_hash(self):
         """คำนวณ Hash ของบล็อก"""
-        # แปลง Data object กลับเป็น dict เพื่อทำ JSON Dump
         data_dicts = [tx.dict() for tx in self.data]
         
         block_string = json.dumps({

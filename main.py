@@ -1,72 +1,165 @@
+# main.py
 import uuid
 import time
 import hashlib
 import random
 from fastapi import FastAPI, HTTPException
-from models import AIRequest, Data, XRayResult
+from pydantic import BaseModel
+
+# Import Models
+from models import AIRequest, Data, XRayResult, DecryptRequest, SensitiveData
+# Import Blockchain Logic
 from blockchain import MedicalBlockchain
+# Import Crypto Logic (จากไฟล์ใหม่ที่เราสร้าง)
+from crypto_utils import generate_key_pair, encrypt_data, decrypt_data
 
 app = FastAPI()
 
 # Initialize System
+class DoctorKeyRequest(BaseModel):
+    doctor_name: str
+    
 blockchain = MedicalBlockchain()
+key_inventory = []
 
-# --- Register Nodes (จำลองโหนดในระบบ) ---
-# Reputation ต่างกันเพื่อให้เห็นผลของ Consensus ชัดเจน
-blockchain.register_node("Bangkok Hospital Core", reputation=90)  # โอกาสได้เยอะสุด
-blockchain.register_node("Research Center AI", reputation=50)     # โอกาสปานกลาง
-blockchain.register_node("General Clinic Node", reputation=10)    # โอกาสน้อยสุด
+# Register Mock Nodes
+blockchain.register_node("Bangkok Hospital Core", reputation=90)
+blockchain.register_node("Research Center AI", reputation=50)
+blockchain.register_node("General Clinic Node", reputation=10)
+    
+# --- API Endpoints ---
+@app.get("/generate_keys")
+def api_generate_keys(request: DoctorKeyRequest):
+    """
+    Utility: สร้าง Key Pair และบันทึกเก็บไว้ในระบบ (เพื่อความสะดวกในการ Demo)
+    """
+    try:
+        private_key, public_key = generate_key_pair()
+        
+        # เก็บข้อมูลลงใน Inventory เพื่อใช้เรียกดูภายหลัง
+        key_data = {
+            "doctor_name": request.doctor_name,
+            "doctor_public_key": public_key,
+            "doctor_private_key": private_key,
+            "created_at": time.ctime()
+        }
+        key_inventory.append(key_data)
+        
+        return {
+            "note": "Keys saved to inventory for demo purposes.",
+            "data": key_data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/get_all_keys")
+def get_all_keys():
+    """
+    API พิเศษสำหรับ Demo: ดู Key ทั้งหมดที่เคย Generate ไว้ใน Session นี้
+    """
+    if not key_inventory:
+        return {"message": "No keys generated yet."}
+    return {
+        "count": len(key_inventory),
+        "keys": key_inventory
+    }
 
 @app.post("/create_block")
 def create_block(request: AIRequest):
     """
-    Simulate Full Flow: 
-    Receive Image -> AI Process -> Create Data -> Mine Block (Consensus)
+    รับข้อมูลคนไข้ -> เข้ารหัสข้อมูลลับ -> AI ประมวลผล -> ลง Block
     """
-    
-    # --- Step 1: Mock AI Process ---
+    authorized_keys = [k["doctor_public_key"] for k in key_inventory]
+    if request.doctor_public_key not in authorized_keys:
+        raise HTTPException(
+            status_code=401, 
+            detail="Unauthorized: This Public Key is not registered in the system."
+        )
+        
+    # 1. Mock AI Process
     mock_diseases = ["Pneumonia", "Tuberculosis", "Normal", "Covid-19"]
     diagnosis = random.choice(mock_diseases)
-    confidence = round(random.uniform(0.75, 0.99), 4)
     ipfs_hash = f"QmHash{uuid.uuid4().hex[:10]}"
 
-    # --- Step 2: Create Data Object ---
+    # 2. Prepare Sensitive Data
+    sensitive_info = {
+        "name": request.patient_name,
+        "age": request.patient_age,
+        "symptoms": request.symptoms,
+        "doctor_notes": f"Initial diagnosis: {diagnosis}"
+    }
+    
+    # 3. Encrypt Data (เรียกใช้ function จาก crypto_utils)
+    try:
+        encrypted_blob = encrypt_data(sensitive_info, request.doctor_public_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # 4. Create Data Object (On-Chain Data)
     data = Data( 
         id=uuid.uuid4().hex,
-        doctor_public_key=request.doctor_id,
+        doctor_public_key=request.doctor_public_key,
         patient_hash_id=hashlib.sha256(request.patient_id.encode()).hexdigest(),
+        encrypted_data=encrypted_blob, 
         ai_result=XRayResult(
             diagnosis=diagnosis,
-            confidence_score=confidence,
             ipfs_image_hash=ipfs_hash
         ),
         timestamp=time.time(),
     )
     
-    # ใส่เข้า Mempool (Pending List)
     blockchain.add_data(data)
-    
-    # --- Step 3: Trigger Mining (Consensus working here) ---
     mining_result = blockchain.create_block()
     
     if not mining_result:
         raise HTTPException(status_code=500, detail="Mining failed")
 
-    # --- Step 4: Return Result ---
     return {
-        "status": "Success & Recorded on Chain",
-        "ai_diagnosis": {
-            "disease": diagnosis,
-            "confidence": confidence
-        },
-        "consensus_result": mining_result # ดูว่า Node ไหนเป็นคนสร้าง Block นี้
+        "status": "Success",
+        "message": "Data encrypted and recorded on chain.",
+        "ai_summary": diagnosis,
+        "mining_info": mining_result
     }
 
 @app.get("/chain")
 def get_chain():
-    """ดู Blockchain ทั้งหมด"""
+    """ดู Blockchain"""
     return blockchain.chain
 
+@app.post("/my_patient_history")
+def get_decrypted_chain(req: DecryptRequest):
+    """
+    ดูประวัติคนไข้ของหมอคนนี้ (ต้องใช้ Private Key ถอดรหัส)
+    """
+    my_records = []
+    
+    for block in blockchain.chain:
+        for tx in block.data:
+            # เช็คว่าเป็นเคสของหมอคนนี้ไหม
+            if tx.doctor_public_key.strip() == req.doctor_public_key.strip():
+                
+                try:
+                    # Decrypt Data (เรียกใช้ function จาก crypto_utils)
+                    decrypted_info = decrypt_data(tx.encrypted_data, req.doctor_private_key)
+                    
+                    my_records.append({
+                        "block_index": block.index,
+                        "timestamp": tx.timestamp,
+                        "ai_diagnosis": tx.ai_result,
+                        "patient_sensitive_data": decrypted_info
+                    })
+                except ValueError:
+                    # กรณีถอดรหัสไม่ได้ (เช่น Key ผิด) ให้ข้าม หรือแจ้ง Error เฉพาะรายการ
+                    continue
+    
+    if not my_records:
+        return {"message": "No records found or Decryption failed (Wrong Key)."}
+        
+    return {
+        "doctor_records_count": len(my_records),
+        "records": my_records
+    }
+    
 @app.get("/nodes")
 def get_nodes():
     """ดูรายชื่อ Nodes และคะแนน Reputation"""
