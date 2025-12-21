@@ -25,7 +25,6 @@ class Data(BaseModel):
     patient_hash_id: str        # Hash ไอดีคนไข้ (ไว้ค้นหาแบบไม่ระบุตัวตน)
     encrypted_data: str         # <--- ข้อมูล SensitiveData ที่ถูกเข้ารหัสแล้ว (Base64)
     ai_result: XRayResult
-    timestamp: float
 
 class AIRequest(BaseModel):
     """Request สร้าง Block: ต้องส่ง Public Key มาด้วยเพื่อใช้เข้ารหัส"""

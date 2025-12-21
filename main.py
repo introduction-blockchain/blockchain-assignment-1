@@ -19,6 +19,10 @@ app = FastAPI()
 class DoctorKeyRequest(BaseModel):
     doctor_name: str
     
+class TamperRequest(BaseModel):
+    block_index: int
+    new_diagnosis: str
+    
 blockchain = MedicalBlockchain()
 key_inventory = []
 
@@ -105,7 +109,6 @@ def create_block(request: AIRequest):
             diagnosis=diagnosis,
             ipfs_image_hash=ipfs_hash
         ),
-        timestamp=time.time(),
     )
     
     blockchain.add_data(data)
@@ -144,7 +147,6 @@ def get_decrypted_chain(req: DecryptRequest):
                     
                     my_records.append({
                         "block_index": block.index,
-                        "timestamp": tx.timestamp,
                         "ai_diagnosis": tx.ai_result,
                         "patient_sensitive_data": decrypted_info
                     })
@@ -182,3 +184,31 @@ def check_integrity():
             return {"status": "TAMPERED", "block_index": i, "reason": "Data Modified"}
             
     return {"status": "SECURE", "message": "Blockchain is valid."}
+
+
+
+@app.post("/simulate_tamper")
+def simulate_tamper(req: TamperRequest):
+    """
+    [โจมตี] จำลองการแก้ไขข้อมูล AI Diagnosis ใน Block ที่กำหนด
+    โดยที่ไม่ได้แก้ไข Hash ของ Block (ทำให้ Link ขาด)
+    """
+    if req.block_index <= 0 or req.block_index >= len(blockchain.chain):
+        raise HTTPException(status_code=404, detail="Block index out of range or cannot tamper Genesis.")
+
+    target_block = blockchain.chain[req.block_index]
+    
+    # จำลองการแก้ข้อมูลใน Transaction แรกของ Block นั้น
+    if target_block.data:
+        old_val = target_block.data[0].ai_result.diagnosis
+        target_block.data[0].ai_result.diagnosis = req.new_diagnosis
+        
+        return {
+            "status": "ATTACK_SUCCESS",
+            "message": f"Data in Block {req.block_index} has been tampered!",
+            "target_validator": target_block.validator,
+            "change": f"From '{old_val}' to '{req.new_diagnosis}'"
+        }
+    else:
+        return {"status": "FAILED", "message": "Block has no data to tamper."}
+    
